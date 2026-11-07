@@ -21,6 +21,7 @@ export interface TypeScriptDetails {
   isMonorepo: boolean;
   isModular: boolean;
   srcDir: string;
+  isTypeScript?: boolean;
 }
 
 export interface ProjectInfo {
@@ -35,7 +36,7 @@ export interface ProjectInfo {
 /**
  * Safely parse a JSON file without throwing errors.
  */
-function readJsonSafe<T = any>(filePath: string): T | null {
+function readJsonSafe<T = unknown>(filePath: string): T | null {
   try {
     if (!fs.existsSync(filePath)) return null;
     const content = fs.readFileSync(filePath, 'utf-8').replace(/^\uFEFF/, '');
@@ -124,13 +125,13 @@ export async function detectProjectType(targetDir: string = process.cwd()): Prom
     };
   }
 
-  // 2. Check for TypeScript Project
-  if (hasTsConfig && hasPackageJson) {
+  // 2. Check for TypeScript or JavaScript (Node.js) Project
+  if (hasPackageJson) {
     const pkg = readJsonSafe<{
       name?: string;
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
-      workspaces?: any;
+      workspaces?: unknown;
     }>(packageJsonPath);
 
     const allDeps = {
@@ -164,14 +165,19 @@ export async function detectProjectType(targetDir: string = process.cwd()): Prom
       fs.existsSync(path.join(resolvedDir, srcDir, 'modules')) ||
       fs.existsSync(path.join(resolvedDir, 'modules'));
 
-    const extras: string[] = [framework !== 'node-vanilla' ? framework : 'TypeScript'];
+    const isTypeScript = hasTsConfig || 'typescript' in allDeps;
+    const stackLabel = isTypeScript ? 'TypeScript' : 'JavaScript / Node.js';
+
+    const extras: string[] = [framework !== 'node-vanilla' ? framework : stackLabel];
     if (hasPrisma) extras.push('Prisma');
     if (hasTypeORM) extras.push('TypeORM');
     if (hasDrizzle) extras.push('Drizzle');
     if (isMonorepo) extras.push('Monorepo');
     if (isModular) extras.push('Modular');
 
-    const summary = `TypeScript (${extras.join(', ')})`;
+    const summary = isTypeScript
+      ? `TypeScript (${extras.join(', ')})`
+      : `JavaScript / Node.js (${extras.join(', ')})`;
 
     return {
       type: 'typescript',
@@ -185,6 +191,7 @@ export async function detectProjectType(targetDir: string = process.cwd()): Prom
         isMonorepo,
         isModular,
         srcDir,
+        isTypeScript,
       },
       summary,
     };

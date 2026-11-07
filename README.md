@@ -1,7 +1,7 @@
 # LaraTS ⚡
 
 > **Smart Architecture Visualizer & Contextual Module Scaffolder CLI**  
-> Tailor-made for **Laravel** & **TypeScript** (Node.js / Express / React / Monorepo) projects.
+> Tailor-made for **Laravel**, **TypeScript**, and **JavaScript (Node.js)** projects.
 
 [![npm version](https://img.shields.io/npm/v/larats.svg)](https://www.npmjs.com/package/larats)
 [![CI](https://github.com/SidiqFatuh187/Larats/actions/workflows/ci.yml/badge.svg)](https://github.com/SidiqFatuh187/Larats/actions/workflows/ci.yml)
@@ -30,8 +30,11 @@ Run instantly without installation via `npx`:
 # Interactive menu mode
 npx larats
 
-# Or scan architecture directly
+# Scan architecture & display terminal pipeline
 npx larats scan
+
+# Open interactive Mermaid diagram in your browser
+npx larats view
 
 # Or scaffold a new module directly
 npx larats scaffold Payment
@@ -44,6 +47,38 @@ npm install -g larats
 larats
 ```
 
+
+---
+
+## 👀 How to View Your Project Architecture
+
+LaraTS makes your codebase architecture visible in 4 convenient ways:
+
+1. 🌐 **Interactive Local Browser (`larats view` / `larats scan --view`)**:
+   Spawns a local browser tab displaying the interactive Mermaid flowchart, component counts, and directory tree.
+   ```bash
+   npx larats view
+   # or scan and open viewer immediately
+   npx larats scan --view
+   ```
+
+2. 📟 **Terminal Architecture Pipeline**:
+   Every time you run `larats scan`, LaraTS prints an ASCII pipeline of your request lifecycle directly in the terminal:
+   ```text
+   Client ──> Routes [4] ──> Controllers [4] ──> Services [2] ──> Models [6] ──> Database
+   ```
+
+3. 🐙 **GitHub & GitLab Native Preview**:
+   Commit and push `ARCHITECTURE.md` to your repository. GitHub natively renders Mermaid.js flowcharts into interactive graphics directly on the web page.
+
+4. 💻 **VS Code & Cursor**:
+   Open `ARCHITECTURE.md` and press `Ctrl+Shift+V` (`Cmd+Shift+V` on macOS) to open the built-in Markdown Preview.
+
+5. 📄 **Standalone HTML Export (`--html`)**:
+   Generate a self-contained `ARCHITECTURE.html` file that can be opened in any web browser without any server:
+   ```bash
+   npx larats scan --html
+   ```
 ---
 
 ## ✨ Key Features
@@ -106,19 +141,22 @@ USAGE:
 
 COMMANDS:
   scan                 Scan repository & generate ARCHITECTURE.md
+  view, preview        Open interactive architecture diagram in local browser
   scaffold, make [name] Scaffold a new module or feature with clean boilerplate
   info                 Show detected project type & architectural flavor
   help                 Display help message
 
 OPTIONS:
-  -o, --output <file>    Output markdown path for scan (default: ARCHITECTURE.md)
+  -o, --output <file>    Output path for scan (default: ARCHITECTURE.md)
+  --view                 Open local browser viewer immediately after scanning
+  -t, --tree             Print directory tree in terminal
+  --html                 Also export standalone ARCHITECTURE.html
   -m, --modular          Enforce modular directory structure
   -s, --standard         Enforce standard/layered directory structure
   --dry-run              Simulate generation without writing files
   -f, --force            Overwrite files if they already exist
   -v, --version          Display CLI version
   -h, --help             Display help message
-```
 
 ### Examples
 

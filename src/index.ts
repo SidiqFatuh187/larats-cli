@@ -1,16 +1,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { exec } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import { detectProjectType, type ProjectInfo } from './detector.js';
 import { scanProject } from './scanner.js';
-import { generateArchitectureMarkdown } from './generator/markdown.js';
+import {
+  generateArchitectureMarkdown,
+  generateArchitectureHtml,
+  renderTerminalFlow,
+} from './generator/markdown.js';
 import { scaffoldModule, validateModuleName, type ScaffoldResult } from './generator/scaffolder.js';
 import { getNaming } from './templates/laravel.js';
 
 declare const __VERSION__: string | undefined;
-const VERSION = typeof __VERSION__ !== 'undefined' ? __VERSION__ : '1.0.1';
+const VERSION = typeof __VERSION__ !== 'undefined' ? __VERSION__ : '1.1.0';
 
 function showHelp() {
   console.log(`
@@ -23,19 +29,22 @@ ${pc.bold('USAGE:')}
 
 ${pc.bold('COMMANDS:')}
   ${pc.green('scan')}                 Scan repository & generate ARCHITECTURE.md
+  ${pc.green('view')}, ${pc.green('preview')}          Open interactive architecture diagram in local browser
   ${pc.green('scaffold')}, ${pc.green('make')} [name] Scaffold a new module or feature with clean boilerplate
   ${pc.green('info')}                 Show detected project type & architectural flavor
   ${pc.green('help')}                 Display this help message
 
 ${pc.bold('OPTIONS:')}
-  ${pc.yellow('-o, --output')} <file>    Output markdown path for scan (default: ARCHITECTURE.md)
+  ${pc.yellow('-o, --output')} <file>    Output path for scan (default: ARCHITECTURE.md)
+  ${pc.yellow('--view')}                 Open local browser viewer immediately after scanning
+  ${pc.yellow('-t, --tree')}             Print directory tree in terminal
+  ${pc.yellow('--html')}                 Also export standalone ARCHITECTURE.html
   ${pc.yellow('-m, --modular')}          Enforce modular directory structure
   ${pc.yellow('-s, --standard')}         Enforce standard/layered directory structure
   ${pc.yellow('--dry-run')}              Simulate generation without writing files
   ${pc.yellow('-f, --force')}            Overwrite files if they already exist
   ${pc.yellow('-v, --version')}          Display CLI version
   ${pc.yellow('-h, --help')}             Display this help message
-
 ${pc.bold('EXAMPLES:')}
   ${pc.cyan('$')} larats
   ${pc.cyan('$')} larats scan
@@ -54,12 +63,66 @@ function handleCancel(): never {
 }
 
 /**
+ * Track usage and politely prompt user to star repo on 2nd and 3rd runs
+ */
+export function checkAndPromptStar(): void {
+  try {
+    const configDir = path.join(os.homedir(), '.larats');
+    const statsFile = path.join(configDir, 'stats.json');
+
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+
+    let stats: { runs?: number } = {};
+    if (fs.existsSync(statsFile)) {
+      stats = JSON.parse(fs.readFileSync(statsFile, 'utf-8'));
+    }
+
+    const runs = (stats.runs || 0) + 1;
+    stats.runs = runs;
+    fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2), 'utf-8');
+
+    if (runs === 2 || runs === 3) {
+      console.log(
+        `\n${pc.yellow('⭐ Enjoying LaraTS?')} If you find this CLI useful, please consider giving it a star on GitHub:\n` +
+        `   ${pc.bold(pc.cyan('👉 https://github.com/SidiqFatuh187/larats-cli'))}\n`
+      );
+    }
+  } catch {
+    // Fail-safe: Never crash CLI on file permission errors
+  }
+}
+
+/**
+ * Open architecture HTML in the default browser without blocking the terminal
+ */
+function openViewer(destination: string): void {
+  const startCmd =
+    process.platform === 'win32'
+      ? `start "" "${destination}"`
+      : process.platform === 'darwin'
+        ? `open "${destination}"`
+        : `xdg-open "${destination}"`;
+
+  try {
+    exec(startCmd, (err) => {
+      if (err) {
+        p.log.warn(`Could not open browser automatically. Please open ${pc.cyan(destination)} manually.`);
+      }
+    });
+  } catch {
+    p.log.warn(`Could not open browser automatically. Please open ${pc.cyan(destination)} manually.`);
+  }
+}
+
+/**
  * Execute scan workflow
  */
 async function runScan(
   projectInfo: ProjectInfo,
   outputPath: string = 'ARCHITECTURE.md',
-  options: { force?: boolean; dryRun?: boolean } = {}
+  options: { force?: boolean; dryRun?: boolean; view?: boolean; tree?: boolean; html?: boolean } = {}
 ) {
   const spinner = p.spinner();
   spinner.start('Scanning codebase structure & components (strict ignore list active)...');
@@ -100,15 +163,21 @@ async function runScan(
     const nonZeroLayers = Object.values(scanResult.components).filter((c) => c.count > 0).length;
     const totalComponents = Object.values(scanResult.components).reduce((sum, c) => sum + c.count, 0);
 
+    const terminalFlow = renderTerminalFlow(scanResult);
+
     if (options.dryRun) {
       spinner.stop(pc.green(`Scan completed in ${scanResult.scanDurationMs}ms (dry run)`));
       p.note(
+        `${pc.bold('Architecture Flow:')}\n  ${pc.cyan(terminalFlow)}\n\n` +
         `${pc.bold('Scanned Files:')} ${scanResult.totalFilesScanned}\n` +
         `${pc.bold('Total Components:')} ${totalComponents} across ${nonZeroLayers} active architectural layers\n` +
         `${pc.bold('Modules Detected:')} ${scanResult.modules.length > 0 ? scanResult.modules.join(', ') : 'None (monolithic structure)'}\n` +
         `${pc.bold('Simulated Output:')} Would write ARCHITECTURE.md to ${pc.cyan(outputPath)} (dry run: no files written)`,
         pc.green('Architecture Map (Dry Run) 🗺️')
       );
+      if (options.tree) {
+        console.log(`\n${pc.bold('Directory Tree:')}\n${scanResult.directoryTree}\n`);
+      }
       p.outro(pc.cyan('Dry run completed: no files written.'));
       return;
     }
@@ -125,16 +194,36 @@ async function runScan(
 
     fs.writeFileSync(destination, markdown, 'utf-8');
 
+    const shouldWriteHtml = options.html || options.view;
+    if (shouldWriteHtml) {
+      const htmlDestination = destination.replace(/\.md$/i, '') + '.html';
+      fs.writeFileSync(htmlDestination, generateArchitectureHtml(scanResult), 'utf-8');
+      p.log.success(`HTML architecture saved to ${pc.cyan(path.relative(projectInfo.rootPath, htmlDestination) || htmlDestination)}`);
+      if (options.view) {
+        openViewer(htmlDestination);
+        p.log.info(pc.green('🌐 Opened interactive architecture diagram in your browser!'));
+      }
+    }
+
+    if (options.tree) {
+      console.log(`\n${pc.bold('Directory Tree:')}\n${scanResult.directoryTree}\n`);
+    }
+
     // Display summary
     p.note(
+      `${pc.bold('Architecture Flow:')}\n  ${pc.cyan(terminalFlow)}\n\n` +
       `${pc.bold('Scanned Files:')} ${scanResult.totalFilesScanned}\n` +
       `${pc.bold('Total Components:')} ${totalComponents} across ${nonZeroLayers} active architectural layers\n` +
       `${pc.bold('Modules Detected:')} ${scanResult.modules.length > 0 ? scanResult.modules.join(', ') : 'None (monolithic structure)'}\n` +
-      `${pc.bold('Documentation:')} Saved to ${pc.cyan(path.relative(projectInfo.rootPath, destination) || outputPath)}`,
+      `${pc.bold('Documentation:')} Saved to ${pc.cyan(path.relative(projectInfo.rootPath, destination) || outputPath)}\n\n` +
+      `${pc.bold('💡 How to view diagram:')}\n` +
+      `  • On GitHub: Push ${outputPath} (Mermaid renders automatically)\n` +
+      `  • In VS Code: Press ${pc.yellow('Ctrl+Shift+V')} for Markdown Preview\n` +
+      `  • In Browser: Run ${pc.cyan('npx larats view')} for instant local web preview`,
       pc.green('Architecture Map Generated! 🗺️')
     );
 
-    p.outro(pc.cyan(`Open ${outputPath} to view your project structure & Mermaid diagram!`));
+    p.outro(pc.cyan(`Done! Open ${outputPath} or run "npx larats view" to inspect architecture!`));
   } catch (err: any) {
     spinner.stop(pc.red('Scan failed'));
     p.log.error(err.message || String(err));
@@ -421,6 +510,9 @@ async function main() {
         standard: { type: 'boolean', short: 's' },
         force: { type: 'boolean', short: 'f' },
         'dry-run': { type: 'boolean' },
+        view: { type: 'boolean' },
+        tree: { type: 'boolean', short: 't' },
+        html: { type: 'boolean' },
         version: { type: 'boolean', short: 'v' },
         help: { type: 'boolean', short: 'h' },
       },
@@ -446,8 +538,16 @@ async function main() {
   }
 
   const command = parsed.positionals[0];
-  const VALID_COMMANDS = new Set(['scan', 'scaffold', 'make', 'info', 'help']);
-  if (command && !VALID_COMMANDS.has(command)) {
+  const VALID_COMMANDS: Record<string, true> = {
+    scan: true,
+    view: true,
+    preview: true,
+    scaffold: true,
+    make: true,
+    info: true,
+    help: true,
+  };
+  if (command && !VALID_COMMANDS[command]) {
     console.error(pc.red(`Error: Unknown command "${command}".`));
     showHelp();
     process.exitCode = 1;
@@ -459,6 +559,9 @@ async function main() {
   const isStandardFlag = parsed.values.standard;
   const isForceFlag = parsed.values.force;
   const isDryRunFlag = parsed.values['dry-run'];
+  const isViewFlag = parsed.values.view;
+  const isTreeFlag = parsed.values.tree;
+  const isHtmlFlag = parsed.values.html;
 
   // Auto-detect project type in current working directory
   const projectInfo = await detectProjectType(process.cwd());
@@ -470,7 +573,34 @@ async function main() {
     await runScan(projectInfo, outputPath, {
       force: isForceFlag,
       dryRun: isDryRunFlag,
+      view: isViewFlag,
+      tree: isTreeFlag,
+      html: isHtmlFlag,
     });
+    checkAndPromptStar();
+    return;
+  }
+
+  if (command === 'view' || command === 'preview') {
+    p.intro(`${pc.bgCyan(pc.black(' LaraTS '))} ${pc.gray(`v${VERSION}`)} - Architecture Viewer`);
+    p.log.info(`Target: ${pc.green(projectInfo.summary)}`);
+    const spinner = p.spinner();
+    spinner.start('Scanning repository & generating architecture map...');
+    const scanResult = await scanProject(projectInfo);
+    spinner.stop(pc.green(`Scanned ${scanResult.totalFilesScanned} files in ${scanResult.scanDurationMs}ms`));
+
+    const htmlDestination = path.resolve(projectInfo.rootPath, 'ARCHITECTURE.html');
+    fs.writeFileSync(htmlDestination, generateArchitectureHtml(scanResult), 'utf-8');
+    openViewer(htmlDestination);
+
+    p.note(
+      `${pc.bold('File:')} ${pc.cyan('ARCHITECTURE.html')}\n` +
+      `Interactive Mermaid.js flowchart & component breakdown loaded in your browser.\n` +
+      `Double-click ${pc.cyan('ARCHITECTURE.html')} anytime to view offline!`,
+      pc.green('Opened in Browser! 🌐')
+    );
+    p.outro(pc.cyan('Done!'));
+    checkAndPromptStar();
     return;
   }
 
@@ -484,6 +614,7 @@ async function main() {
       force: isForceFlag,
       dryRun: isDryRunFlag,
     });
+    checkAndPromptStar();
     return;
   }
 
@@ -491,6 +622,7 @@ async function main() {
     p.intro(`${pc.bgCyan(pc.black(' LaraTS '))} ${pc.gray(`v${VERSION}`)}`);
     showProjectInfo(projectInfo);
     p.outro(pc.cyan('Done.'));
+    checkAndPromptStar();
     return;
   }
 
@@ -513,6 +645,11 @@ async function main() {
         value: 'scan',
         label: '🔍 Scan Architecture & Generate ARCHITECTURE.md',
         hint: 'Creates component stats, directory tree & Mermaid flowchart',
+      },
+      {
+        value: 'view',
+        label: '🌐 Open Interactive Architecture Viewer in Browser',
+        hint: 'Spawns local browser tab with Mermaid flowchart & stats',
       },
       {
         value: 'scaffold',
@@ -539,7 +676,19 @@ async function main() {
     await runScan(projectInfo, outputPath, {
       force: isForceFlag,
       dryRun: isDryRunFlag,
+      view: isViewFlag,
+      tree: isTreeFlag,
+      html: isHtmlFlag,
     });
+  } else if (action === 'view') {
+    const spinner = p.spinner();
+    spinner.start('Scanning repository & generating architecture map...');
+    const scanResult = await scanProject(projectInfo);
+    spinner.stop(pc.green(`Scanned in ${scanResult.scanDurationMs}ms`));
+    const htmlDestination = path.resolve(projectInfo.rootPath, 'ARCHITECTURE.html');
+    fs.writeFileSync(htmlDestination, generateArchitectureHtml(scanResult), 'utf-8');
+    openViewer(htmlDestination);
+    p.outro(pc.green('🌐 Opened interactive architecture diagram in your browser!'));
   } else if (action === 'scaffold') {
     await runScaffold(projectInfo, undefined, {
       modular: isModularFlag,
@@ -551,6 +700,7 @@ async function main() {
     showProjectInfo(projectInfo);
     p.outro(pc.cyan('Done!'));
   }
+  checkAndPromptStar();
 }
 
 main().catch((err) => {

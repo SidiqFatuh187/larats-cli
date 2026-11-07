@@ -12,7 +12,7 @@
 | **Project Name** | `larats` |
 | **Project Type** | **TYPESCRIPT** |
 | **Detected Stack** | `TypeScript (TypeScript)` |
-| **Scanned Files** | `27` files indexed (safe ignore filter applied) |
+| **Scanned Files** | `28` files indexed (safe ignore filter applied) |
 
 ---
 
@@ -83,6 +83,7 @@ Clean, high-level directory tree showing key folders (ignoring build artifacts, 
 │   ├── scaffolder.test.ts
 │   ├── scanner.test.ts
 │   └── ... (1 more files/folders)
+├── ARCHITECTURE.html
 ├── ARCHITECTURE.md
 ├── CHANGELOG.md
 ├── LICENSE

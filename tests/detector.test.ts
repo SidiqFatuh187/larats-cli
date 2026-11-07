@@ -81,6 +81,36 @@ test('detectProjectType identifies TypeScript project with Express and Prisma', 
   }
 });
 
+test('detectProjectType identifies JavaScript/Node.js project without tsconfig', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'larats-js-'));
+
+  try {
+    // Create package.json with fastify and drizzle (no tsconfig)
+    fs.writeFileSync(
+      path.join(tempDir, 'package.json'),
+      JSON.stringify({
+        name: 'js-fastify-api',
+        dependencies: {
+          fastify: '^4.26.0',
+          'drizzle-orm': '^0.30.0',
+        },
+      })
+    );
+
+    const projectInfo = await detectProjectType(tempDir);
+
+    assert.equal(projectInfo.type, 'typescript');
+    assert.equal(projectInfo.name, 'js-fastify-api');
+    assert.equal(projectInfo.typescript?.framework, 'fastify');
+    assert.equal(projectInfo.typescript?.hasDrizzle, true);
+    assert.equal(projectInfo.typescript?.isTypeScript, false);
+    assert.match(projectInfo.summary, /JavaScript \/ Node\.js/);
+    assert.match(projectInfo.summary, /fastify/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('detectProjectType falls back to unknown for generic folder', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'larats-unknown-'));
 

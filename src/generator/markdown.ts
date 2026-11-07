@@ -35,6 +35,7 @@ export function mermaidLabel(str: string, maxLen: number = 40): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/`/g, "'")
+    .replace(/[\[\]\(\)\{\}]/g, '')
     .replace(/[\r\n]+/g, ' ')
     .trim();
   if (cleaned.length > maxLen) {
@@ -436,4 +437,206 @@ ${fence(directoryTree || '(Empty directory structure)', 'text')}
 
 ${securityNotice}
 `;
+}
+
+/**
+ * Render a concise, clean ASCII architecture request pipeline for terminal output.
+ */
+export function renderTerminalFlow(scanResult: ScanResult): string {
+  const { projectInfo, components } = scanResult;
+  const steps: string[] = [];
+
+  if (projectInfo.type === 'laravel') {
+    steps.push('Client');
+    const routes = components['Routes']?.count ?? 0;
+    if (routes > 0) steps.push(`Routes [${routes}]`);
+    const requests = components['Form Requests']?.count ?? 0;
+    if (requests > 0) steps.push(`Requests [${requests}]`);
+    const controllers = components['Controllers']?.count ?? 0;
+    if (controllers > 0) steps.push(`Controllers [${controllers}]`);
+    const services = (components['Services']?.count ?? 0) + (components['Actions']?.count ?? 0);
+    if (services > 0) steps.push(`Services [${services}]`);
+    const models = components['Models']?.count ?? 0;
+    if (models > 0) steps.push(`Models [${models}]`);
+    steps.push('Database');
+  } else if (projectInfo.type === 'typescript') {
+    const hasAnyLayer = ['Controllers', 'Services', 'Repositories', 'Routes', 'DTOs & Schemas', 'Models & Entities', 'UI Components']
+      .some((k) => (components[k]?.count ?? 0) > 0);
+
+    if (hasAnyLayer) {
+      steps.push('Client');
+      const ui = components['UI Components']?.count ?? 0;
+      if (ui > 0) steps.push(`UI [${ui}]`);
+      const routes = components['Routes']?.count ?? 0;
+      if (routes > 0) steps.push(`Router [${routes}]`);
+      const dtos = components['DTOs & Schemas']?.count ?? 0;
+      if (dtos > 0) steps.push(`DTOs [${dtos}]`);
+      const controllers = components['Controllers']?.count ?? 0;
+      if (controllers > 0) steps.push(`Controllers [${controllers}]`);
+      const services = components['Services']?.count ?? 0;
+      if (services > 0) steps.push(`Services [${services}]`);
+      const data = (components['Repositories']?.count ?? 0) + (components['Models & Entities']?.count ?? 0);
+      if (data > 0) steps.push(`Data Layer [${data}]`);
+      steps.push('Database');
+    } else {
+      const src = components['Source Files']?.count ?? 0;
+      const tests = components['Test Files']?.count ?? 0;
+      steps.push('CLI / Entrypoint');
+      if (src > 0) steps.push(`Source Modules [${src}]`);
+      if (tests > 0) steps.push(`Test Suites [${tests}]`);
+    }
+  } else {
+    const src = components['Source Files']?.count ?? 0;
+    const tests = components['Test Files']?.count ?? 0;
+    steps.push('Project Root');
+    if (src > 0) steps.push(`Source [${src}]`);
+    if (tests > 0) steps.push(`Tests [${tests}]`);
+  }
+
+  return steps.join(' ──> ');
+}
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Generate standalone interactive HTML architecture viewer with Mermaid.js.
+ */
+export function generateArchitectureHtml(scanResult: ScanResult): string {
+  const { projectInfo, totalFilesScanned, components, modules, directoryTree } = scanResult;
+  const mermaid = generateMermaidDiagram(scanResult);
+
+  const componentRowsHtml = Object.entries(components)
+    .map(([, comp]) => {
+      const samples = comp.files.slice(0, 3).map((f) => `<code>${escapeHtml(f)}</code>`).join(', ');
+      const more = comp.files.length > 3 ? ` <span class="muted">(+${comp.files.length - 3} more)</span>` : '';
+      return `<tr>
+        <td><strong>${escapeHtml(comp.name)}</strong></td>
+        <td><span class="badge">${comp.count}</span></td>
+        <td>${escapeHtml(comp.description)}</td>
+        <td>${samples ? samples + more : '-'}</td>
+      </tr>`;
+    })
+    .join('\n');
+
+  const modulesHtml = modules.length > 0
+    ? `<div class="card">
+        <h2>📦 Detected Modules & Domains (${modules.length})</h2>
+        <div class="modules-grid">
+          ${modules.map((m) => `<div class="module-item"><code>${escapeHtml(m)}</code></div>`).join('\n')}
+        </div>
+      </div>`
+    : '';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LaraTS Architecture: ${escapeHtml(projectInfo.name)}</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --border: #334155;
+      --primary: #38bdf8;
+      --accent: #818cf8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+      padding: 2rem 1rem;
+    }
+    .container { max-width: 1080px; margin: 0 auto; }
+    header { margin-bottom: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; }
+    .header-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
+    h1 { font-size: 1.8rem; font-weight: 700; color: #fff; }
+    .pill { background: #0284c7; color: #fff; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.85rem; font-weight: 600; }
+    .subtitle { color: var(--muted); margin-top: 0.5rem; font-size: 0.95rem; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin-bottom: 2rem; }
+    h2 { font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; color: #e2e8f0; }
+    table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .badge { background: #334155; padding: 0.2rem 0.6rem; border-radius: 4px; font-weight: 600; font-size: 0.85rem; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; background: #090d16; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.85rem; color: #38bdf8; }
+    pre { background: #090d16; padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem; border: 1px solid var(--border); line-height: 1.4; }
+    .mermaid-box { display: flex; justify-content: center; background: #090d16; border-radius: 8px; padding: 2rem 1rem; overflow-x: auto; border: 1px solid var(--border); }
+    .modules-grid { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .module-item { background: #090d16; border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 1rem; }
+    .muted { color: var(--muted); font-size: 0.85rem; }
+    footer { text-align: center; color: var(--muted); font-size: 0.85rem; margin-top: 3rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="header-top">
+        <div>
+          <h1>🏛️ Architecture Overview: ${escapeHtml(projectInfo.name)}</h1>
+          <p class="subtitle">Stack: <strong>${escapeHtml(projectInfo.summary)}</strong> &bull; Total Files: <strong>${totalFilesScanned}</strong></p>
+        </div>
+        <span class="pill">LaraTS Architecture Map</span>
+      </div>
+    </header>
+
+    <div class="card">
+      <h2>🗺️ Interactive Architecture Flowchart</h2>
+      <div class="mermaid-box">
+        <pre class="mermaid">${mermaid}</pre>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>📊 Architectural Component Statistics</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Component Layer</th>
+            <th>Files</th>
+            <th>Description</th>
+            <th>Sample Files</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${componentRowsHtml || '<tr><td colspan="4">No architectural components detected</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+
+    ${modulesHtml}
+
+    <div class="card">
+      <h2>🌲 Directory Structure Tree</h2>
+      <pre><code>${escapeHtml(directoryTree || '(Empty directory)')}</code></pre>
+    </div>
+
+    <footer>
+      Generated locally &amp; offline with ❤️ by <strong>LaraTS CLI</strong>
+    </footer>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script>
+    if (typeof mermaid !== 'undefined') {
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: 'dark',
+        flowchart: { curve: 'basis' }
+      });
+    }
+  </script>
+</body>
+</html>`;
 }

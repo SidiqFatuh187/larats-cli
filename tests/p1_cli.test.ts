@@ -44,6 +44,29 @@ test('CLI: arg parsing supports flag before command (larats -o custom.md scan)',
   }
 });
 
+test('CLI: scan --html generates both markdown and HTML architecture files', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'larats-cli-html-'));
+
+  try {
+    fs.mkdirSync(path.join(tempDir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(tempDir, 'src', 'index.ts'), 'export const a = 1;');
+    fs.writeFileSync(path.join(tempDir, 'package.json'), '{"name": "test-html-app"}');
+
+    execFileSync(
+      process.execPath,
+      [CLI_PATH, 'scan', '--html', '--tree'],
+      { cwd: tempDir, encoding: 'utf-8' }
+    );
+
+    assert.ok(fs.existsSync(path.join(tempDir, 'ARCHITECTURE.md')));
+    assert.ok(fs.existsSync(path.join(tempDir, 'ARCHITECTURE.html')));
+    const html = fs.readFileSync(path.join(tempDir, 'ARCHITECTURE.html'), 'utf-8');
+    assert.match(html, /LaraTS Architecture: test-html-app/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('CLI: scan refuses to overwrite non-LaraTS files unless --force', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'larats-cli-overwrite-'));
 
