@@ -12,6 +12,8 @@ import {
   generateArchitectureHtml,
   renderTerminalFlow,
 } from './generator/markdown.js';
+import { generateAiContext, mergeAiRules } from './generator/ai-context.js';
+import { copyToClipboard } from './utils/clipboard.js';
 import { scaffoldModule, validateModuleName, type ScaffoldResult } from './generator/scaffolder.js';
 import { getNaming } from './templates/laravel.js';
 
@@ -30,6 +32,7 @@ ${pc.bold('USAGE:')}
 ${pc.bold('COMMANDS:')}
   ${pc.green('scan')}                 Scan repository & generate ARCHITECTURE.md
   ${pc.green('view')}, ${pc.green('preview')}          Open interactive architecture diagram in local browser
+  ${pc.green('ai')}                   Export architecture context prompt for AI (Cursor, Claude, Copilot)
   ${pc.green('scaffold')}, ${pc.green('make')} [name] Scaffold a new module or feature with clean boilerplate
   ${pc.green('info')}                 Show detected project type & architectural flavor
   ${pc.green('help')}                 Display this help message
@@ -37,6 +40,9 @@ ${pc.bold('COMMANDS:')}
 ${pc.bold('OPTIONS:')}
   ${pc.yellow('-o, --output')} <file>    Output path for scan (default: ARCHITECTURE.md)
   ${pc.yellow('--view')}                 Open local browser viewer immediately after scanning
+  ${pc.yellow('--copy')}                 Copy AI architecture context prompt to clipboard
+  ${pc.yellow('--cursor')}               Inject architecture rules into .cursorrules
+  ${pc.yellow('--claude')}               Inject architecture rules into CLAUDE.md
   ${pc.yellow('-t, --tree')}             Print directory tree in terminal
   ${pc.yellow('--html')}                 Also export standalone ARCHITECTURE.html
   ${pc.yellow('-m, --modular')}          Enforce modular directory structure
@@ -62,33 +68,40 @@ function handleCancel(): never {
   process.exit(0);
 }
 
+export interface UserStats {
+  runs?: number;
+  hasPromptedStar?: boolean;
+}
+
 /**
- * Track usage and politely prompt user to star repo on 2nd and 3rd runs
+ * Track usage and politely prompt user to star repo once on 3rd or 4th run
  */
-export function checkAndPromptStar(): void {
+export function checkAndPromptStar(customStatsPath?: string): void {
   try {
     const configDir = path.join(os.homedir(), '.larats');
-    const statsFile = path.join(configDir, 'stats.json');
+    const statsFile = customStatsPath || path.join(configDir, 'stats.json');
 
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
+    if (!fs.existsSync(path.dirname(statsFile))) {
+      fs.mkdirSync(path.dirname(statsFile), { recursive: true });
     }
 
-    let stats: { runs?: number } = {};
+    let stats: UserStats = {};
     if (fs.existsSync(statsFile)) {
       stats = JSON.parse(fs.readFileSync(statsFile, 'utf-8'));
     }
 
     const runs = (stats.runs || 0) + 1;
     stats.runs = runs;
-    fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2), 'utf-8');
 
-    if (runs === 2 || runs === 3) {
+    if (runs >= 3 && !stats.hasPromptedStar) {
+      stats.hasPromptedStar = true;
       console.log(
         `\n${pc.yellow('⭐ Enjoying LaraTS?')} If you find this CLI useful, please consider giving it a star on GitHub:\n` +
         `   ${pc.bold(pc.cyan('👉 https://github.com/SidiqFatuh187/larats-cli'))}\n`
       );
     }
+
+    fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2), 'utf-8');
   } catch {
     // Fail-safe: Never crash CLI on file permission errors
   }
@@ -116,6 +129,69 @@ function openViewer(destination: string): void {
   }
 }
 
+
+/**
+ * Execute AI architecture rules export workflow
+ */
+async function runAi(
+  projectInfo: ProjectInfo,
+  options: { copy?: boolean; cursor?: boolean; claude?: boolean } = {}
+) {
+  const spinner = p.spinner();
+  spinner.start('Scanning codebase & formulating AI architecture context...');
+
+  try {
+    const scanResult = await scanProject(projectInfo);
+    spinner.stop(pc.green(`Architecture context ready (${scanResult.scanDurationMs}ms)`));
+
+    const aiContext = generateAiContext(scanResult);
+    let handled = false;
+
+    if (options.cursor) {
+      const cursorPath = path.resolve(projectInfo.rootPath, '.cursorrules');
+      const existing = fs.existsSync(cursorPath) ? fs.readFileSync(cursorPath, 'utf-8') : '';
+      const updated = mergeAiRules(existing, aiContext);
+      fs.writeFileSync(cursorPath, updated, 'utf-8');
+      p.log.success(pc.green(`✔ Architecture rules injected into ${pc.bold('.cursorrules')}`));
+      handled = true;
+    }
+
+    if (options.claude) {
+      const claudePath = path.resolve(projectInfo.rootPath, 'CLAUDE.md');
+      const existing = fs.existsSync(claudePath) ? fs.readFileSync(claudePath, 'utf-8') : '';
+      const updated = mergeAiRules(existing, aiContext);
+      fs.writeFileSync(claudePath, updated, 'utf-8');
+      p.log.success(pc.green(`✔ Architecture rules injected into ${pc.bold('CLAUDE.md')}`));
+      handled = true;
+    }
+
+    if (options.copy) {
+      const copied = await copyToClipboard(aiContext);
+      if (copied) {
+        p.log.success(pc.green('✔ Architecture context copied to clipboard! Ready to paste into ChatGPT or Claude.'));
+      } else {
+        p.log.warn('Could not access system clipboard. Printing prompt to console instead.');
+        console.log(`\n${aiContext}\n`);
+      }
+      handled = true;
+    }
+
+    if (!handled) {
+      console.log(`\n${pc.bold(pc.cyan('--- AI Codebase Architecture Prompt ---'))}\n${aiContext}\n${pc.bold(pc.cyan('---------------------------------------'))}\n`);
+      p.note(
+        `Tip: Run with ${pc.yellow('--copy')} to copy directly to clipboard,\n` +
+        `or ${pc.yellow('--cursor')} / ${pc.yellow('--claude')} to inject into rules files automatically!`,
+        pc.green('Prompt Ready for AI 🤖')
+      );
+    }
+
+    p.outro(pc.cyan('Done!'));
+  } catch (err: unknown) {
+    spinner.stop(pc.red('Failed to generate AI context'));
+    p.log.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+  }
+}
 /**
  * Execute scan workflow
  */
@@ -514,13 +590,16 @@ async function main() {
         tree: { type: 'boolean', short: 't' },
         html: { type: 'boolean' },
         version: { type: 'boolean', short: 'v' },
+        copy: { type: 'boolean' },
+        cursor: { type: 'boolean' },
+        claude: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
       allowPositionals: true,
       strict: true,
     });
-  } catch (err: any) {
-    console.error(pc.red(`Error: ${err.message}`));
+  } catch (err: unknown) {
+    console.error(pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
     showHelp();
     process.exitCode = 1;
     return;
@@ -545,6 +624,7 @@ async function main() {
     scaffold: true,
     make: true,
     info: true,
+    ai: true,
     help: true,
   };
   if (command && !VALID_COMMANDS[command]) {
@@ -604,6 +684,18 @@ async function main() {
     return;
   }
 
+  if (command === 'ai') {
+    p.intro(`${pc.bgCyan(pc.black(' LaraTS '))} ${pc.gray(`v${VERSION}`)} - AI Architecture Context`);
+    p.log.info(`Target: ${pc.green(projectInfo.summary)}`);
+    await runAi(projectInfo, {
+      copy: parsed.values.copy as boolean | undefined,
+      cursor: parsed.values.cursor as boolean | undefined,
+      claude: parsed.values.claude as boolean | undefined,
+    });
+    checkAndPromptStar();
+    return;
+  }
+
   if (command === 'scaffold' || command === 'make') {
     const moduleName = parsed.positionals[1];
     p.intro(`${pc.bgCyan(pc.black(' LaraTS '))} ${pc.gray(`v${VERSION}`)} - Module Scaffolder`);
@@ -647,6 +739,11 @@ async function main() {
         hint: 'Creates component stats, directory tree & Mermaid flowchart',
       },
       {
+        value: 'ai',
+        label: '🤖 Export Architecture Context for AI (Cursor, Claude, Copilot)',
+        hint: 'Generate architecture rules for AI coding agents',
+      },
+      {
         value: 'view',
         label: '🌐 Open Interactive Architecture Viewer in Browser',
         hint: 'Spawns local browser tab with Mermaid flowchart & stats',
@@ -679,6 +776,26 @@ async function main() {
       view: isViewFlag,
       tree: isTreeFlag,
       html: isHtmlFlag,
+    });
+  } else if (action === 'ai') {
+    const aiTarget = await p.select({
+      message: 'How would you like to export the AI architecture context?',
+      options: [
+        { value: 'copy', label: '📋 Copy directly to Clipboard', hint: 'Ready to paste into ChatGPT or Claude web' },
+        { value: 'cursor', label: '🖱️  Save into .cursorrules', hint: 'Inject rules for Cursor AI' },
+        { value: 'claude', label: '🧠 Save into CLAUDE.md', hint: 'Inject rules for Claude Code' },
+        { value: 'print', label: '🖥️  Display prompt in terminal', hint: 'View formatted markdown text' },
+      ],
+    });
+
+    if (p.isCancel(aiTarget)) {
+      handleCancel();
+    }
+
+    await runAi(projectInfo, {
+      copy: aiTarget === 'copy',
+      cursor: aiTarget === 'cursor',
+      claude: aiTarget === 'claude',
     });
   } else if (action === 'view') {
     const spinner = p.spinner();

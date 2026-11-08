@@ -18,8 +18,8 @@ When codebases grow large, developers often struggle to understand the architect
 
 1. 🔍 **Architecture Scanner & Visualizer (`scan`)**: Instantly scans your repository, categorizes layers (Models, Controllers, Services, Actions, Filament Resources, Routes, etc.), and generates a clean `ARCHITECTURE.md` with an interactive **Mermaid.js flowchart** and directory tree.
 2. 🏗️ **Contextual Module Scaffolder (`scaffold` / `make`)**: Quickly generates cohesive feature modules with clean, production-ready boilerplate code tailored to your exact stack (Laravel or TypeScript).
-3. 🔒 **100% Local & Secure**: No data ever leaves your computer. Sensitive files (`.env`, private keys, vendor folders) are strictly excluded.
-
+3. 🤖 **AI Architecture Context Packager (`ai`)**: Exports a token-efficient system prompt teaching Cursor AI, Claude, Copilot, or ChatGPT your exact layered boundaries (`--copy`, `--cursor`, `--claude`).
+4. 🔒 **100% Local & Secure**: No data ever leaves your computer. Sensitive files (`.env`, private keys, vendor folders) are strictly excluded.
 ---
 
 ## 🚀 Quick Start
@@ -35,6 +35,9 @@ npx larats scan
 
 # Open interactive Mermaid diagram in your browser
 npx larats view
+
+# Export architecture context rules for AI (Cursor, Claude, Copilot)
+npx larats ai --copy
 
 # Or scaffold a new module directly
 npx larats scaffold Payment
@@ -118,6 +121,13 @@ Create new features in seconds with consistent boilerplate:
 ### 3. 🛡️ Anti-Overwrite Protection
 LaraTS will **NEVER** silently overwrite your existing code. If a target file already exists, LaraTS skips it and alerts you. You can only overwrite files by explicitly providing `--force`.
 
+
+### 4. 🤖 AI Architecture Context Packager (`ai`)
+Teach AI coding assistants (Cursor, Claude Code, GitHub Copilot, ChatGPT) your exact project architecture rules so they never write misplaced code again:
+- **Copy to Clipboard**: `larats ai --copy` — Copies clean, compressed architecture instructions (< 500 tokens) ready to paste into ChatGPT or Claude.
+- **Cursor AI Rules**: `larats ai --cursor` — Injects architecture boundaries and directory maps directly into `.cursorrules`.
+- **Claude Code Rules**: `larats ai --claude` — Injects architecture conventions into `CLAUDE.md`.
+*(Safe merge: uses `<!-- larats-rules:start -->` tags so existing user instructions are never overwritten).*
 ---
 
 ## 🔒 Strict Security & Safety Guarantees
@@ -142,6 +152,7 @@ USAGE:
 COMMANDS:
   scan                 Scan repository & generate ARCHITECTURE.md
   view, preview        Open interactive architecture diagram in local browser
+  ai                   Export architecture context prompt for AI (Cursor, Claude, Copilot)
   scaffold, make [name] Scaffold a new module or feature with clean boilerplate
   info                 Show detected project type & architectural flavor
   help                 Display help message
@@ -149,6 +160,9 @@ COMMANDS:
 OPTIONS:
   -o, --output <file>    Output path for scan (default: ARCHITECTURE.md)
   --view                 Open local browser viewer immediately after scanning
+  --copy                 Copy AI architecture context prompt to clipboard
+  --cursor               Inject architecture rules into .cursorrules
+  --claude               Inject architecture rules into CLAUDE.md
   -t, --tree             Print directory tree in terminal
   --html                 Also export standalone ARCHITECTURE.html
   -m, --modular          Enforce modular directory structure
