@@ -101,19 +101,19 @@ export async function checkAndPromptStar(customStatsPath?: string, forceAnswer?:
         const shouldStar = typeof forceAnswer === 'boolean'
           ? forceAnswer
           : await p.confirm({
-              message: '⭐ Suka dengan LaraTS? Maukah kamu memberi star di GitHub untuk mendukung proyek ini?',
+              message: '⭐ Enjoying LaraTS? Would you like to support the project with a star on GitHub?',
               initialValue: true,
             });
 
         if (shouldStar && !p.isCancel(shouldStar)) {
           openViewer(repoUrl);
-          p.log.success(pc.green('Terima kasih banyak atas dukungannya! ⭐ Halaman GitHub sedang dibuka...'));
+          p.log.success(pc.green('Thank you so much for your support! ⭐ Opening GitHub repository in your browser...'));
         } else {
-          p.log.message(pc.gray('Tidak masalah, enjoy menggunakan LaraTS! 👍'));
+          p.log.message(pc.gray('No problem, enjoy building with LaraTS! 👍'));
         }
       } else {
         console.log(
-          `\n${pc.yellow('⭐ Suka dengan LaraTS?')} Jika CLI ini membantu pekerjaanmu, yuk beri star di GitHub:\n` +
+          `\n${pc.yellow('⭐ Enjoying LaraTS?')} If you find this CLI useful, please consider giving it a star on GitHub:\n` +
           `   ${pc.bold(pc.cyan('👉 ' + repoUrl))}\n`
         );
       }
