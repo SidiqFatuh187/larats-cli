@@ -99,31 +99,31 @@ test('mergeAiRules creates and replaces tagged block without touching custom use
   assert.doesNotMatch(reMerged, /Rule 1: Thin controllers\./);
 });
 
-test('checkAndPromptStar triggers once on 3rd run and persists flag', () => {
+test('checkAndPromptStar triggers once on 3rd run and persists flag', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'larats-star-test-'));
   const statsFile = path.join(tempDir, 'stats.json');
 
   try {
     // Run 1: runs = 1, no prompt
-    checkAndPromptStar(statsFile);
+    await checkAndPromptStar(statsFile, false);
     let stats = JSON.parse(fs.readFileSync(statsFile, 'utf-8'));
     assert.equal(stats.runs, 1);
     assert.equal(stats.hasPromptedStar, undefined);
 
     // Run 2: runs = 2, no prompt
-    checkAndPromptStar(statsFile);
+    await checkAndPromptStar(statsFile, false);
     stats = JSON.parse(fs.readFileSync(statsFile, 'utf-8'));
     assert.equal(stats.runs, 2);
     assert.equal(stats.hasPromptedStar, undefined);
 
-    // Run 3: runs = 3, prompts star and sets hasPromptedStar = true
-    checkAndPromptStar(statsFile);
+    // Run 3: runs = 3, prompts star (user says yes), sets hasPromptedStar = true
+    await checkAndPromptStar(statsFile, true);
     stats = JSON.parse(fs.readFileSync(statsFile, 'utf-8'));
     assert.equal(stats.runs, 3);
     assert.equal(stats.hasPromptedStar, true);
 
     // Run 4: runs = 4, hasPromptedStar remains true (never prompts again)
-    checkAndPromptStar(statsFile);
+    await checkAndPromptStar(statsFile, false);
     stats = JSON.parse(fs.readFileSync(statsFile, 'utf-8'));
     assert.equal(stats.runs, 4);
     assert.equal(stats.hasPromptedStar, true);

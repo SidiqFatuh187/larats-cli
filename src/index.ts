@@ -76,7 +76,7 @@ export interface UserStats {
 /**
  * Track usage and politely prompt user to star repo once on 3rd or 4th run
  */
-export function checkAndPromptStar(customStatsPath?: string): void {
+export async function checkAndPromptStar(customStatsPath?: string, forceAnswer?: boolean): Promise<void> {
   try {
     const configDir = path.join(os.homedir(), '.larats');
     const statsFile = customStatsPath || path.join(configDir, 'stats.json');
@@ -95,10 +95,28 @@ export function checkAndPromptStar(customStatsPath?: string): void {
 
     if (runs >= 3 && !stats.hasPromptedStar) {
       stats.hasPromptedStar = true;
-      console.log(
-        `\n${pc.yellow('⭐ Enjoying LaraTS?')} If you find this CLI useful, please consider giving it a star on GitHub:\n` +
-        `   ${pc.bold(pc.cyan('👉 https://github.com/SidiqFatuh187/larats-cli'))}\n`
-      );
+      const repoUrl = 'https://github.com/SidiqFatuh187/larats-cli';
+
+      if (process.stdin.isTTY || typeof forceAnswer === 'boolean') {
+        const shouldStar = typeof forceAnswer === 'boolean'
+          ? forceAnswer
+          : await p.confirm({
+              message: '⭐ Suka dengan LaraTS? Maukah kamu memberi star di GitHub untuk mendukung proyek ini?',
+              initialValue: true,
+            });
+
+        if (shouldStar && !p.isCancel(shouldStar)) {
+          openViewer(repoUrl);
+          p.log.success(pc.green('Terima kasih banyak atas dukungannya! ⭐ Halaman GitHub sedang dibuka...'));
+        } else {
+          p.log.message(pc.gray('Tidak masalah, enjoy menggunakan LaraTS! 👍'));
+        }
+      } else {
+        console.log(
+          `\n${pc.yellow('⭐ Suka dengan LaraTS?')} Jika CLI ini membantu pekerjaanmu, yuk beri star di GitHub:\n` +
+          `   ${pc.bold(pc.cyan('👉 ' + repoUrl))}\n`
+        );
+      }
     }
 
     fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2), 'utf-8');
@@ -657,7 +675,7 @@ async function main() {
       tree: isTreeFlag,
       html: isHtmlFlag,
     });
-    checkAndPromptStar();
+    await checkAndPromptStar();
     return;
   }
 
@@ -680,7 +698,7 @@ async function main() {
       pc.green('Opened in Browser! 🌐')
     );
     p.outro(pc.cyan('Done!'));
-    checkAndPromptStar();
+    await checkAndPromptStar();
     return;
   }
 
@@ -692,7 +710,7 @@ async function main() {
       cursor: parsed.values.cursor as boolean | undefined,
       claude: parsed.values.claude as boolean | undefined,
     });
-    checkAndPromptStar();
+    await checkAndPromptStar();
     return;
   }
 
@@ -706,7 +724,7 @@ async function main() {
       force: isForceFlag,
       dryRun: isDryRunFlag,
     });
-    checkAndPromptStar();
+    await checkAndPromptStar();
     return;
   }
 
@@ -714,7 +732,7 @@ async function main() {
     p.intro(`${pc.bgCyan(pc.black(' LaraTS '))} ${pc.gray(`v${VERSION}`)}`);
     showProjectInfo(projectInfo);
     p.outro(pc.cyan('Done.'));
-    checkAndPromptStar();
+    await checkAndPromptStar();
     return;
   }
 
@@ -817,7 +835,7 @@ async function main() {
     showProjectInfo(projectInfo);
     p.outro(pc.cyan('Done!'));
   }
-  checkAndPromptStar();
+  await checkAndPromptStar();
 }
 
 main().catch((err) => {
