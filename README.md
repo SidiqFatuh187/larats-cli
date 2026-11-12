@@ -1,4 +1,4 @@
-# LaraTS ⚡
+# LaraTS 
 
 > **Smart Architecture Visualizer & Contextual Module Scaffolder CLI**  
 > Tailor-made for **Laravel**, **TypeScript**, and **JavaScript (Node.js)** projects.
@@ -9,7 +9,7 @@
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.3.0-brightgreen.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
 [![Offline First](https://img.shields.io/badge/Security-100%25%20Offline-success.svg)](#-strict-security--safety-guarantees)
-
+[![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/SidiqFatuh187/badge.svg)](https://hub.xerj.org/contributors/SidiqFatuh187)
 ---
 
 ## 💡 What is LaraTS?
