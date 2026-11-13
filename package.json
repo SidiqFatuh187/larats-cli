@@ -1,6 +1,6 @@
 {
   "name": "larats",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Smart Architecture Visualizer & Contextual Module Scaffolder CLI for Laravel and TypeScript projects",
   "keywords": [
     "larats",

@@ -21,7 +21,7 @@ import { scaffoldModule, validateModuleName, type ScaffoldResult } from './gener
 import { getNaming } from './templates/laravel.js';
 
 declare const __VERSION__: string | undefined;
-const VERSION = typeof __VERSION__ !== 'undefined' ? __VERSION__ : '1.1.1';
+const VERSION = typeof __VERSION__ !== 'undefined' ? __VERSION__ : '1.2.0';
 
 function showHelp() {
   console.log(`
