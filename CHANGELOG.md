@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- `larats stack`: detect technologies from root and nested npm/Composer manifests, source-file extensions, and configuration filenames, including mixed Laravel/frontend projects.
+- Interactive technology selection and registry additions; categorized Markdown badges with readable labels and provider logos where available.
+- `stack --flat`, `--copy`, `--output`, `--dry-run`, and explicit `--force` overwrite support. Non-interactive stdout contains only Markdown.
+- Safe stack output paths and symlink rejection; secret/dependency/build exclusions and actionable malformed-manifest errors.
+- Interactive stack generation now saves `TECH_STACK.md` and opens a local browser preview automatically, with overwrite confirmation and a selectable Markdown snippet. Preview HTML is stored outside the project in a temporary directory.
+- **Static relationship analysis**: inspects JS/TS imports, reexports, dynamic `import()`, unshadowed `require()`, Vue/Svelte script blocks, PHP namespace imports, Laravel DB facade calls, Prisma datasource providers, and literal Express/fetch HTTP route matching. Generates a Mermaid flowchart with numbered evidence and an SVG diagram in the browser preview.
+- Architecture diagram in browser preview: role-lane SVG layout (Frontend, Backend, Data, etc.) with directed arrows, scope grouping, numbered evidence links, and accessible text inventory.
+
+### Notes
+- Stack detection and relationship analysis run locally without network requests. Generated badge images load from Shields.io when rendered.
+- Detection reports manifest/file evidence, not active services or database runtime configuration. Existing commands and package version are unchanged.
+- Relationship analysis limits: 5,000 files max (512 KiB each, 32 MiB total), literal specifiers only, no tsconfig aliases or workspace package resolution. Warnings document every omission.
+
+---
+
 ## [1.0.2] - 2026-10-24
 
 ### 🚀 Core Fixes (P0)

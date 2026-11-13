@@ -1,18 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { exec } from 'node:child_process';
+import { exec, execFile } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import { pathToFileURL } from 'node:url';
 import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import { detectProjectType, type ProjectInfo } from './detector.js';
 import { scanProject } from './scanner.js';
+import { analyzeStackGraph } from './stack-graph.js';
 import {
   generateArchitectureMarkdown,
   generateArchitectureHtml,
   renderTerminalFlow,
 } from './generator/markdown.js';
 import { generateAiContext, mergeAiRules } from './generator/ai-context.js';
+import { detectTechStack, generateTechStackMarkdown, generateTechStackHtml, TECH_REGISTRY } from './generator/techstack.js';
 import { copyToClipboard } from './utils/clipboard.js';
 import { scaffoldModule, validateModuleName, type ScaffoldResult } from './generator/scaffolder.js';
 import { getNaming } from './templates/laravel.js';
@@ -33,14 +36,17 @@ ${pc.bold('COMMANDS:')}
   ${pc.green('scan')}                 Scan repository & generate ARCHITECTURE.md
   ${pc.green('view')}, ${pc.green('preview')}          Open interactive architecture diagram in local browser
   ${pc.green('ai')}                   Export architecture context prompt for AI (Cursor, Claude, Copilot)
+  ${pc.green('stack')}                Map technology relationships, save Markdown & open a browser preview
   ${pc.green('scaffold')}, ${pc.green('make')} [name] Scaffold a new module or feature with clean boilerplate
   ${pc.green('info')}                 Show detected project type & architectural flavor
   ${pc.green('help')}                 Display this help message
 
 ${pc.bold('OPTIONS:')}
-  ${pc.yellow('-o, --output')} <file>    Output path for scan (default: ARCHITECTURE.md)
+  ${pc.yellow('-o, --output')} <file>    Output path (scan: ARCHITECTURE.md; interactive stack: TECH_STACK.md)
+                            Non-interactive stack defaults to terminal output
   ${pc.yellow('--view')}                 Open local browser viewer immediately after scanning
-  ${pc.yellow('--copy')}                 Copy AI architecture context prompt to clipboard
+  ${pc.yellow('--copy')}                 Copy to clipboard (stack: skips saving/preview unless --output is set)
+  ${pc.yellow('--flat')}                 Render stack badges without category subheadings
   ${pc.yellow('--cursor')}               Inject architecture rules into .cursorrules
   ${pc.yellow('--claude')}               Inject architecture rules into CLAUDE.md
   ${pc.yellow('-t, --tree')}             Print directory tree in terminal
@@ -55,6 +61,9 @@ ${pc.bold('EXAMPLES:')}
   ${pc.cyan('$')} larats
   ${pc.cyan('$')} larats scan
   ${pc.cyan('$')} larats scan --output docs/ARCHITECTURE.md
+  ${pc.cyan('$')} larats stack
+  ${pc.cyan('$')} larats stack --flat --copy
+  ${pc.cyan('$')} larats stack --output docs/STACK.md
   ${pc.cyan('$')} larats scaffold Payment
   ${pc.cyan('$')} larats make Order --modular
 `);
@@ -144,6 +153,188 @@ function openViewer(destination: string): void {
     });
   } catch {
     p.log.warn(`Could not open browser automatically. Please open ${pc.cyan(destination)} manually.`);
+  }
+}
+
+interface StackOptions {
+  output?: string;
+  flat?: boolean;
+  copy?: boolean;
+  force?: boolean;
+  dryRun?: boolean;
+}
+
+function writeStackMarkdown(rootPath: string, output: string, markdown: string, force = false): void {
+  const root = fs.realpathSync(rootPath);
+  const relative = path.relative(rootPath, path.resolve(rootPath, output));
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Output must be a Markdown file inside the project root: ${output}`);
+  }
+
+  const parts = relative.split(path.sep);
+  let directory = root;
+  for (const part of parts.slice(0, -1)) {
+    directory = path.join(directory, part);
+    try {
+      fs.mkdirSync(directory);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+    const stat = fs.lstatSync(directory);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(`Output directory must be a real directory, not a symlink: ${directory}`);
+    }
+  }
+
+  const destination = path.join(directory, parts[parts.length - 1]);
+  try {
+    const stat = fs.lstatSync(destination);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      throw new Error(`Output target must be a regular file, not a symlink or directory: ${output}`);
+    }
+    if (!force) throw new Error(`Output already exists: ${output}. Use --force to overwrite it.`);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+
+  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT |
+    (force ? 0 : fs.constants.O_EXCL) | (fs.constants.O_NOFOLLOW ?? 0);
+  let fd: number;
+  try {
+    fd = fs.openSync(destination, flags, 0o666);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new Error(`Output already exists: ${output}. Use --force to overwrite it.`);
+    }
+    throw err;
+  }
+  try {
+    if (!fs.fstatSync(fd).isFile()) throw new Error(`Output target must be a regular file: ${output}`);
+    if (force) fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, markdown, 'utf-8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+async function runStack(projectInfo: ProjectInfo, options: StackOptions = {}): Promise<void> {
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const spinner = interactive ? p.spinner() : undefined;
+  spinner?.start('Inspecting manifests and supported source files for technology relationships...');
+  try {
+    const detectedStack = await detectTechStack(projectInfo);
+    const analyzedGraph = await analyzeStackGraph(projectInfo, TECH_REGISTRY);
+    const detectedIds = new Set(detectedStack.map((tech) => tech.id));
+    for (const node of analyzedGraph.nodes) {
+      if (node.techId) detectedIds.add(node.techId);
+    }
+    const detected = TECH_REGISTRY.filter((tech) => detectedIds.has(tech.id));
+    spinner?.stop(`Detected ${detected.length} technologies and ${analyzedGraph.edges.length} evidenced relationships.`);
+    let selected = detected.map((tech) => tech.id);
+
+    if (interactive) {
+      if (detected.length > 0) {
+        const selection = await p.multiselect({
+          message: 'Choose detected technologies to include (Space to toggle):',
+          options: detected.map((tech) => ({ value: tech.id, label: tech.name, hint: tech.category })),
+          initialValues: selected,
+          maxItems: 10,
+          required: false,
+        });
+        if (p.isCancel(selection)) return;
+        selected = selection;
+      } else {
+        p.log.info('No technologies detected. You can select technologies manually.');
+      }
+
+      const remaining = TECH_REGISTRY.filter((tech) => !selected.includes(tech.id));
+      if (remaining.length > 0) {
+        const addMore = await p.confirm({
+          message: 'Add more technologies from the registry?',
+          initialValue: selected.length === 0,
+        });
+        if (p.isCancel(addMore)) return;
+        if (addMore) {
+          const additions = await p.multiselect({
+            message: 'Choose additional technologies (Space to toggle):',
+            options: remaining.map((tech) => ({ value: tech.id, label: tech.name, hint: tech.category })),
+            required: false,
+            maxItems: 10,
+          });
+          if (p.isCancel(additions)) return;
+          selected.push(...additions);
+        }
+      }
+    }
+
+    const chosen = TECH_REGISTRY.filter((tech) => selected.includes(tech.id));
+    const selectedIds = new Set(selected);
+    const nodes = analyzedGraph.nodes.filter((node) => !node.techId || selectedIds.has(node.techId));
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const graph = {
+      nodes,
+      edges: analyzedGraph.edges.filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to)),
+      warnings: analyzedGraph.warnings,
+    };
+    const markdown = generateTechStackMarkdown(chosen, options.flat, graph);
+    if (options.dryRun) {
+      process.stdout.write(markdown);
+      console.error('Dry run: no files written, clipboard changed, or browser opened.');
+      return;
+    }
+
+    const output = options.output ?? (interactive && !options.copy ? 'TECH_STACK.md' : undefined);
+    if (output !== undefined) {
+      const destination = path.resolve(projectInfo.rootPath, output);
+      let force = options.force;
+      if (interactive && !force && fs.lstatSync(destination, { throwIfNoEntry: false })?.isFile()) {
+        const overwrite = await p.confirm({
+          message: `${destination} already exists. Overwrite it?`,
+          initialValue: false,
+        });
+        if (p.isCancel(overwrite) || !overwrite) return;
+        force = true;
+      }
+      writeStackMarkdown(projectInfo.rootPath, output, markdown, force);
+      console.error(`Tech Stack Markdown written to ${destination}`);
+      if (interactive) {
+        const previewDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'larats-stack-preview-'));
+        const previewPath = path.join(previewDirectory, 'index.html');
+        fs.writeFileSync(previewPath, generateTechStackHtml(chosen, options.flat, graph), 'utf-8');
+        console.error(`Tech Stack preview saved to ${previewPath}`);
+        console.error('Badge images load from external services and need an internet connection.');
+        const previewUrl = pathToFileURL(previewPath).href;
+        const opener = process.platform === 'win32' ? 'rundll32.exe'
+          : process.platform === 'darwin' ? 'open' : 'xdg-open';
+        const openerArgs = process.platform === 'win32'
+          ? ['url.dll,FileProtocolHandler', previewUrl] : [previewUrl];
+        const warnBrowser = () => {
+          console.error(`Could not open the browser automatically. Open ${previewUrl} manually (${previewPath}).`);
+        };
+        try {
+          execFile(opener, openerArgs, (err) => {
+            if (err) warnBrowser();
+          });
+        } catch {
+          warnBrowser();
+        }
+      }
+    }
+    let printMarkdown = output === undefined && !options.copy;
+    if (options.copy) {
+      if (await copyToClipboard(markdown)) {
+        console.error('Tech Stack Markdown copied to clipboard.');
+      } else {
+        console.error('Could not access the system clipboard. Markdown is printed below; copy it manually.');
+        printMarkdown = true;
+        process.exitCode = 1;
+      }
+    }
+    if (printMarkdown) process.stdout.write(markdown);
+  } catch (err: unknown) {
+    spinner?.stop('Tech stack generation failed.');
+    console.error(`Error generating Tech Stack Markdown: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
   }
 }
 
@@ -609,6 +800,7 @@ async function main() {
         html: { type: 'boolean' },
         version: { type: 'boolean', short: 'v' },
         copy: { type: 'boolean' },
+        flat: { type: 'boolean' },
         cursor: { type: 'boolean' },
         claude: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
@@ -643,6 +835,7 @@ async function main() {
     make: true,
     info: true,
     ai: true,
+    stack: true,
     help: true,
   };
   if (command && !VALID_COMMANDS[command]) {
@@ -660,9 +853,34 @@ async function main() {
   const isViewFlag = parsed.values.view;
   const isTreeFlag = parsed.values.tree;
   const isHtmlFlag = parsed.values.html;
+  const stackOptions: StackOptions = {
+    output: parsed.values.output,
+    flat: parsed.values.flat,
+    copy: parsed.values.copy,
+    force: isForceFlag,
+    dryRun: isDryRunFlag,
+  };
+  const stackProjectInfo: ProjectInfo = {
+    type: 'unknown',
+    name: path.basename(process.cwd()),
+    rootPath: process.cwd(),
+    summary: 'Tech stack',
+  };
+
+  if (command === 'stack') {
+    if (process.stdin.isTTY && process.stdout.isTTY) {
+      p.intro(`${pc.bgCyan(pc.black(' LaraTS '))} ${pc.gray(`v${VERSION}`)} - Tech Stack Generator`);
+    }
+    await runStack(stackProjectInfo, stackOptions);
+    return;
+  }
 
   // Auto-detect project type in current working directory
-  const projectInfo = await detectProjectType(process.cwd());
+  const deferProjectDetection = !command && process.stdin.isTTY &&
+    ['package.json', 'composer.json'].some((manifest) =>
+      fs.lstatSync(path.join(process.cwd(), manifest), { throwIfNoEntry: false })?.isSymbolicLink()
+    );
+  let projectInfo = deferProjectDetection ? stackProjectInfo : await detectProjectType(process.cwd());
 
   // Non-interactive command routing
   if (command === 'scan') {
@@ -753,32 +971,37 @@ async function main() {
     options: [
       {
         value: 'scan',
-        label: '🔍 Scan Architecture & Generate ARCHITECTURE.md',
+        label: 'Scan Architecture & Generate ARCHITECTURE.md',
         hint: 'Creates component stats, directory tree & Mermaid flowchart',
       },
       {
         value: 'ai',
-        label: '🤖 Export Architecture Context for AI (Cursor, Claude, Copilot)',
+        label: 'Export Architecture Context for AI (Cursor, Claude, Copilot)',
         hint: 'Generate architecture rules for AI coding agents',
       },
       {
+        value: 'stack',
+        label: 'Generate Tech Stack Diagram & Markdown',
+        hint: 'Inspect source relationships, save TECH_STACK.md and open the diagram',
+      },
+      {
         value: 'view',
-        label: '🌐 Open Interactive Architecture Viewer in Browser',
+        label: 'Open Interactive Architecture Viewer in Browser',
         hint: 'Spawns local browser tab with Mermaid flowchart & stats',
       },
       {
         value: 'scaffold',
-        label: '🏗️  Scaffold New Feature / Module',
+        label: 'Scaffold New Feature / Module',
         hint: 'Interactively generate boilerplate components with safety checks',
       },
       {
         value: 'info',
-        label: '📊 Inspect Detected Architecture Details',
+        label: 'Inspect Detected Architecture Details',
         hint: 'View detected frameworks, ORMs, and configurations',
       },
       {
         value: 'exit',
-        label: '🚪 Exit',
+        label: 'Exit',
       },
     ],
   });
@@ -786,6 +1009,10 @@ async function main() {
   if (p.isCancel(action) || action === 'exit') {
     handleCancel();
   }
+  if (deferProjectDetection && action !== 'stack') {
+    projectInfo = await detectProjectType(process.cwd());
+  }
+
 
   if (action === 'scan') {
     await runScan(projectInfo, outputPath, {
@@ -795,14 +1022,17 @@ async function main() {
       tree: isTreeFlag,
       html: isHtmlFlag,
     });
+  } else if (action === 'stack') {
+    await runStack(projectInfo, stackOptions);
+    return;
   } else if (action === 'ai') {
     const aiTarget = await p.select({
       message: 'How would you like to export the AI architecture context?',
       options: [
-        { value: 'copy', label: '📋 Copy directly to Clipboard', hint: 'Ready to paste into ChatGPT or Claude web' },
-        { value: 'cursor', label: '🖱️  Save into .cursorrules', hint: 'Inject rules for Cursor AI' },
-        { value: 'claude', label: '🧠 Save into CLAUDE.md', hint: 'Inject rules for Claude Code' },
-        { value: 'print', label: '🖥️  Display prompt in terminal', hint: 'View formatted markdown text' },
+        { value: 'copy', label: 'Copy directly to Clipboard', hint: 'Ready to paste into ChatGPT or Claude web' },
+        { value: 'cursor', label: 'Save into .cursorrules', hint: 'Inject rules for Cursor AI' },
+        { value: 'claude', label: 'Save into CLAUDE.md', hint: 'Inject rules for Claude Code' },
+        { value: 'print', label: 'Display prompt in terminal', hint: 'View formatted markdown text' },
       ],
     });
 
