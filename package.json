@@ -46,13 +46,13 @@
   "dependencies": {
     "@clack/prompts": "^0.10.1",
     "fast-glob": "^3.3.3",
-    "picocolors": "^1.1.1"
+    "picocolors": "^1.1.1",
+    "typescript": "^5.7.3"
   },
   "devDependencies": {
     "@types/node": "^22.13.1",
     "tsup": "^8.4.0",
-    "tsx": "^4.23.15",
-    "typescript": "^5.7.3"
+    "tsx": "^4.23.15"
   },
   "engines": {
     "node": ">=18.3.0"
